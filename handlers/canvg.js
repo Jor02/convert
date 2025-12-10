@@ -27,6 +27,24 @@ const supportedFormats = [
     from: false,
     to: true,
     internal: "jpeg"
+  },
+  {
+    name: "WebP",
+    format: "webp",
+    extension: "webp",
+    mime: "image/webp",
+    from: false,
+    to: true,
+    internal: "webp"
+  },
+  {
+    name: "CompuServe Graphics Interchange Format (GIF)",
+    format: "gif",
+    extension: "gif",
+    mime: "image/gif",
+    from: false,
+    to: false,
+    internal: "gif"
   }
 ];
 
