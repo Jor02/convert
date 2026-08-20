@@ -11,7 +11,7 @@ export default function HelpButton() {
 	useEffect(() => {
 		if (!btnRef.current) return;
 		const instance = tippy(btnRef.current, {
-			content: "Help & Info",
+			content: "Learn more about the converter!",
 			placement: "bottom",
 			delay: [300, 0],
 		});
@@ -57,9 +57,9 @@ export default function HelpButton() {
 		<StyledButton
 			buttonRef={btnRef}
 			onClick={onHelpClick}
+			icon={<HelpCircle size={16} />}
 		>
-			<HelpCircle size={16} />
-			{" Help"}
+			Help
 		</StyledButton>
-	)
+	);
 }

@@ -1,11 +1,10 @@
-import { ConvertPathNode, type FileFormat, type FormatHandler } from "./FormatHandler.ts";
+import { ConvertPathNode, type FileFormat, type FormatHandler, type SuggestedRoute, type SuggestedRouteDeclaration, type SuggestedRouteStep } from "./FormatHandler.ts";
 import { PriorityQueue } from './PriorityQueue.ts';
 
 interface QueueNode {
     index: number;
     cost: number;
     path: ConvertPathNode[];
-    visitedBorder: number;
 };
 interface CategoryChangeCost {
     from: string;
@@ -17,6 +16,17 @@ interface CategoryChangeCost {
 interface CategoryAdaptiveCost {
     categories: string[]; // List of sequential categories
     cost: number; // Cost to apply when a conversion involves all of the specified categories in sequence.
+}
+
+interface SuggestedRouteParsedStep {
+    format: string;
+    handler?: string;
+}
+
+interface SuggestedRouteEdge {
+    fromIndex: number;
+    toIndex: number;
+    route: ConvertPathNode[];
 }
 
 
@@ -41,6 +51,7 @@ export interface Edge {
     to: {format: FileFormat, index: number};
     handler: string;
     cost: number;
+    expandedRoute?: ConvertPathNode[];
 };
 
 export class TraversionGraph {
@@ -225,9 +236,139 @@ export class TraversionGraph {
             });
         });
 
+        this.addSuggestedRouteEdges(supportedFormatCache, strictCategories);
+
         const endTime = performance.now();
         console.log(`Traversion graph initialized in ${(endTime - startTime).toFixed(2)} ms with ${this.nodes.length} nodes and ${this.edges.length} edges.`);
     }
+
+    private parseSuggestedRouteStep(step: SuggestedRouteDeclaration): SuggestedRouteParsedStep {
+        if (typeof step !== "string") return { format: step.format, handler: step.handler };
+        const separatorIndex = step.indexOf(":");
+        if (separatorIndex === -1) return { format: step };
+        return {
+            format: step.slice(0, separatorIndex),
+            handler: step.slice(separatorIndex + 1)
+        };
+    }
+
+    private findNodeIndexByFormatToken(token: string): number {
+        const normalized = token.toLowerCase();
+        return this.nodes.findIndex(node =>
+            node.format.extension.toLowerCase() === normalized
+            || node.format.format.toLowerCase() === normalized
+            || node.format.internal.toLowerCase() === normalized
+        );
+    }
+
+    private expandSuggestedRoute(
+        startNode: Node,
+        routeDecls: SuggestedRouteDeclaration[]
+    ): SuggestedRouteEdge | null {
+        if (routeDecls.length === 0) return null;
+
+        const steps = routeDecls.map(step => this.parseSuggestedRouteStep(step));
+        const route: ConvertPathNode[] = [];
+        let currentNodeIndex = this.nodes.findIndex(n => n.identifier === startNode.identifier);
+        let currentNode = startNode;
+
+        for (const step of steps) {
+            const targetNodeIndex = this.findNodeIndexByFormatToken(step.format);
+            if (targetNodeIndex === -1) return null;
+
+            const candidateEdges = currentNode.edges
+                .map(edgeIndex => this.edges[edgeIndex])
+                .filter(edge => edge.to.index === targetNodeIndex);
+
+            if (candidateEdges.length === 0) return null;
+
+            let chosenEdge = candidateEdges.find(edge =>
+                step.handler ? edge.handler.toLowerCase() === step.handler.toLowerCase() : true
+            );
+            if (!chosenEdge) return null;
+
+            const handler = this.handlers.find(h => h.name === chosenEdge.handler);
+            if (!handler) return null;
+
+            if (chosenEdge.expandedRoute && chosenEdge.expandedRoute.length > 0) {
+                route.push(...chosenEdge.expandedRoute);
+            } else {
+                route.push(new ConvertPathNode(handler, chosenEdge.to.format));
+            }
+
+            currentNodeIndex = chosenEdge.to.index;
+            currentNode = this.nodes[currentNodeIndex];
+        }
+
+        return {
+            fromIndex: this.nodes.findIndex(n => n.identifier === startNode.identifier),
+            toIndex: currentNodeIndex,
+            route
+        };
+    }
+
+    private addSuggestedRouteEdges(
+        supportedFormatCache: Map<string, FileFormat[]>,
+        strictCategories: boolean
+    ) {
+        const handlerOrder = new Map<string, number>();
+        this.handlers.forEach((handler, index) => handlerOrder.set(handler.name, index));
+
+        for (const handler of this.handlers) {
+            if (!handler.suggestedRoutes || handler.suggestedRoutes.length === 0) continue;
+            const handlerFormats = supportedFormatCache.get(handler.name);
+            if (!handlerFormats) continue;
+
+            const inputFormats = handlerFormats.filter(format => format.from);
+            for (const inputFormat of inputFormats) {
+                const startIdentifier = inputFormat.mime + `(${inputFormat.format})`;
+                const startNodeIndex = this.nodes.findIndex(node => node.identifier === startIdentifier);
+                if (startNodeIndex === -1) continue;
+
+                const startNode = this.nodes[startNodeIndex];
+
+                for (const suggestedRoute of handler.suggestedRoutes) {
+                    const expanded = this.expandSuggestedRoute(startNode, suggestedRoute);
+                    if (!expanded || expanded.route.length === 0 || expanded.toIndex === expanded.fromIndex) continue;
+
+                    const finalFormat = this.nodes[expanded.toIndex].format;
+                    const existingSuggestedEdge = this.nodes[expanded.fromIndex].edges
+                        .map(edgeIndex => ({ edgeIndex, edge: this.edges[edgeIndex] }))
+                        .find(({ edge }) =>
+                            edge.to.index === expanded.toIndex
+                            && edge.handler === handler.name
+                            && !!edge.expandedRoute
+                        );
+
+                    const shortcutCost = this.costFunction(
+                        { format: inputFormat, index: expanded.fromIndex },
+                        { format: finalFormat, index: expanded.toIndex },
+                        strictCategories,
+                        handler.name,
+                        handlerOrder.get(handler.name) ?? 0
+                    );
+
+                    if (existingSuggestedEdge) {
+                        if (shortcutCost < this.edges[existingSuggestedEdge.edgeIndex].cost) {
+                            this.edges[existingSuggestedEdge.edgeIndex].cost = shortcutCost;
+                            this.edges[existingSuggestedEdge.edgeIndex].expandedRoute = expanded.route;
+                        }
+                        continue;
+                    }
+
+                    this.edges.push({
+                        from: { format: inputFormat, index: expanded.fromIndex },
+                        to: { format: finalFormat, index: expanded.toIndex },
+                        handler: handler.name,
+                        cost: shortcutCost,
+                        expandedRoute: expanded.route
+                    });
+                    this.nodes[expanded.fromIndex].edges.push(this.edges.length - 1);
+                }
+            }
+        }
+    }
+
     /**
      * Cost function for calculating the cost of converting from one format to another using a specific handler.
      */
@@ -301,7 +442,11 @@ export class TraversionGraph {
                 from: {format: {...edge.from.format}, index: edge.from.index},
                 to: {format: {...edge.to.format}, index: edge.to.index},
                 handler: edge.handler,
-                cost: edge.cost
+                cost: edge.cost,
+                expandedRoute: edge.expandedRoute?.map(node => ({
+                    handler: node.handler,
+                    format: {...node.format}
+                }))
             })),
             categoryChangeCosts: this.categoryChangeCosts.map(c => ({from: c.from, to: c.to, handler: c.handler, cost: c.cost})),
             categoryAdaptiveCosts: this.categoryAdaptiveCosts.map(c => ({categories: [...c.categories], cost: c.cost}))
@@ -331,20 +476,21 @@ export class TraversionGraph {
         this.listeners.forEach(l => l(state, path));
     }
 
-    public async* searchPath(from: ConvertPathNode, to: ConvertPathNode, simpleMode: boolean) : AsyncGenerator<ConvertPathNode[]> {
+    public async* searchPath(from: ConvertPathNode, to: ConvertPathNode, simpleMode: boolean, onProgress?: (iterations: number, title?: string) => void) : AsyncGenerator<ConvertPathNode[]> {
+        console.log("searchPath called with:", from, "to:", to, "simpleMode:", simpleMode);
         // Dijkstra's algorithm
         // Priority queue of {index, cost, path}
         let queue: PriorityQueue<QueueNode> = new PriorityQueue<QueueNode>(
             1000,
             (a: QueueNode, b: QueueNode) => a.cost - b.cost
         );
-        let visited = new Array<number>();
+        let visited = new Set<number>();
         const fromIdentifier = from.format.mime + `(${from.format.format})`;
         const toIdentifier = to.format.mime + `(${to.format.format})`;
         let fromIndex = this.nodes.findIndex(node => node.identifier === fromIdentifier);
         let toIndex = this.nodes.findIndex(node => node.identifier === toIdentifier);
         if (fromIndex === -1 || toIndex === -1) return []; // If either format is not in the graph, return empty array
-        queue.add({index: fromIndex, cost: 0, path: [from], visitedBorder: visited.length });
+        queue.add({index: fromIndex, cost: 0, path: [from] });
         console.log(`Starting path search from ${from.format.mime}(${from.handler?.name}) to ${to.format.mime}(${to.handler?.name}) (simple mode: ${simpleMode})`);
         let iterations = 0;
         let pathsFound = 0;
@@ -352,17 +498,21 @@ export class TraversionGraph {
             iterations++;
             // Get the node with the lowest cost
             let current = queue.poll()!;
-            const indexInVisited = visited.indexOf(current.index);
-            if (indexInVisited >= 0 && indexInVisited < current.visitedBorder) {
+            if (onProgress && iterations % 100 === 0) onProgress(iterations, `Trying ${current.path.map(p => p.format.format).join(" → ")}...`);
+            // In Dijkstra's, once a node is popped from the priority queue,
+            // its optimal cost is finalized. Skip if already processed.
+            if (visited.has(current.index)) {
                 this.dispatchEvent("skipped", current.path);
                 continue;
             }
+            visited.add(current.index);
             if (current.index === toIndex) {
                 // Return the path of handlers and formats to get from the input format to the output format
                 const logString = `${iterations} with cost ${current.cost.toFixed(3)}: ${current.path.map(p => p.handler.name + "(" + p.format.mime + ")").join(" → ")}`;
                 const foundPathLast = current.path.at(-1);
                 if (simpleMode || !to.handler || to.handler.name === foundPathLast?.handler.name) {
                     console.log(`Found path at iteration ${logString}`);
+                    if (onProgress) onProgress(iterations, `Trying ${current.path.map(p => p.format.format).join(" → ")}...`);
                     this.dispatchEvent("found", current.path);
                     yield current.path;
                     pathsFound++;
@@ -373,21 +523,25 @@ export class TraversionGraph {
                 }
                 continue;
             }
-            visited.push(current.index);
             this.dispatchEvent("searching", current.path);
             this.nodes[current.index].edges.forEach(edgeIndex => {
                 let edge = this.edges[edgeIndex];
-                const indexInVisited = visited.indexOf(edge.to.index);
-                if (indexInVisited >= 0 && indexInVisited < current.visitedBorder) return;
+                if (visited.has(edge.to.index)) return;
                 const handler = this.handlers.find(h => h.name === edge.handler);
                 if (!handler) return; // If the handler for this edge is not found, skip it
 
-                let path = current.path.concat({handler: handler, format: edge.to.format});
+                let path = current.path.slice();
+                if (edge.expandedRoute && edge.expandedRoute.length > 0) {
+                    path = path.concat(edge.expandedRoute.map(node => new ConvertPathNode(node.handler, node.format)));
+                }
+                else {
+                    path.push({handler: handler, format: edge.to.format});
+                }
+
                 queue.add({
                     index: edge.to.index,
                     cost: current.cost + edge.cost + this.calculateAdaptiveCost(path),
                     path: path,
-                    visitedBorder: visited.length
                 });
             });
             if (iterations % LOG_FREQUENCY === 0) {

@@ -24,12 +24,16 @@
 	min-height: 300px;
 	--stripe-width: 10px;
 	--stripe-size: 28.284px; /* stripe-width * 2 * sqrt(2) */
-
 	.loading-status-area {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 1rem;
+
+		.file-info-badge {
+			transform: scale(1.1);
+			margin-bottom: 1rem;
+		}
 	}
 
 	.loading-title {
@@ -73,9 +77,13 @@
 			transparent calc(var(--stripe-width) * 2)
 		);
 		background-size: var(--stripe-size) var(--stripe-size);
-		background-repeat: repeat;
 		animation: progress-stripes 0.8s linear infinite;
 		overflow: hidden;
+
+		&.is-done {
+			background: color-mix(in srgb, #22c55e 16%, transparent);
+			animation: none;
+		}
 	}
 
 	.loading-conversion-info::before {
@@ -95,10 +103,14 @@
 			var(--primary-transparent) calc(var(--stripe-width) * 2)
 		);
 		background-size: var(--stripe-size) var(--stripe-size);
-		background-repeat: repeat;
 		animation: progress-stripes 0.8s linear infinite;
 		transition: clip-path 0.2s ease-out;
 		z-index: 0;
+	}
+
+	.loading-conversion-info.is-done::before {
+		background: color-mix(in srgb, #22c55e 30%, transparent);
+		animation: none;
 	}
 
 	.loading-conversion-info > * {
@@ -139,6 +151,7 @@
 	.loading-actions {
 		display: flex;
 		width: 100%;
+		gap: 0.5rem;
 	}
 
 	.loading-action-btn {
@@ -154,6 +167,7 @@
 		border: 1px solid var(--border-primary);
 		transition: background-color 0.2s, color 0.2s, border-color 0.2s;
 		width: 100%;
+		flex: 1 1 50%;
 	}
 
 	.loading-action-btn.danger {
@@ -164,5 +178,25 @@
 		background: rgba(239, 68, 68, 0.1);
 		color: #ef4444;
 		border-color: rgba(239, 68, 68, 0.2);
+	}
+
+	.loading-action-btn.secondary {
+		background: var(--bg-section);
+		color: var(--text-secondary);
+	}
+
+	.loading-action-btn.secondary:hover {
+		background: var(--bg-card-alt-hover);
+		border-color: var(--border-secondary);
+	}
+
+	.loading-action-btn.primary {
+		background: var(--primary);
+		color: var(--text-on-primary);
+		border-color: transparent;
+	}
+
+	.loading-action-btn.primary:hover {
+		opacity: 0.9;
 	}
 }

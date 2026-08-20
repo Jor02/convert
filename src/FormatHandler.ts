@@ -29,6 +29,189 @@ export interface FileFormat extends IFormatDefinition {
   lossless?: boolean;
 }
 
+export type HandlerOptionValue = boolean | number | string | string[];
+
+export interface HandlerOptionChoice {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+export type HandlerOptionVisibilityContext = Readonly<Record<string, HandlerOptionValue>>;
+
+interface HandlerOptionBase<TKind extends string, TValue extends HandlerOptionValue> {
+  kind: TKind;
+  id: string;
+  name: string;
+  description?: string;
+  section?: string;
+  defaultValue?: TValue;
+  showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+  getValue: () => TValue;
+  setValue: (value: TValue) => void;
+}
+
+export interface ToggleOptionDefinition extends HandlerOptionBase<"toggle", boolean> {}
+
+export interface NumberOptionDefinition extends HandlerOptionBase<"number", number> {
+  min?: number;
+  max?: number;
+  step?: number;
+  control?: "input" | "slider";
+  unit?: string;
+}
+
+export interface TextOptionDefinition extends HandlerOptionBase<"text", string> {
+  inputType?: "text" | "email" | "url" | "password";
+  placeholder?: string;
+  minLength?: number;
+  maxLength?: number;
+  multiline?: boolean;
+}
+
+export interface SelectOptionDefinition extends HandlerOptionBase<"select", string> {
+  choices: HandlerOptionChoice[];
+}
+
+export interface MultiSelectOptionDefinition extends HandlerOptionBase<"multiselect", string[]> {
+  choices: HandlerOptionChoice[];
+}
+
+export type HandlerOptionDefinition =
+  | ToggleOptionDefinition
+  | NumberOptionDefinition
+  | TextOptionDefinition
+  | SelectOptionDefinition
+  | MultiSelectOptionDefinition;
+
+export class ToggleOption implements ToggleOptionDefinition {
+  public readonly kind = "toggle" as const;
+  constructor(
+    public id: string,
+    public name: string,
+    public getValue: () => boolean,
+    public setValue: (value: boolean) => void,
+    public defaultValue?: boolean,
+    public description?: string,
+    public section?: string,
+    public showWhen?: (values: HandlerOptionVisibilityContext) => boolean
+  ) {}
+}
+
+export class NumberOption implements NumberOptionDefinition {
+  public readonly kind = "number" as const;
+  public min?: number;
+  public max?: number;
+  public step?: number;
+  public control?: "input" | "slider";
+  public unit?: string;
+  public defaultValue?: number;
+  public description?: string;
+  public section?: string;
+  public showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+
+  constructor(
+    public id: string,
+    public name: string,
+    public getValue: () => number,
+    public setValue: (value: number) => void,
+    config: {
+      min?: number;
+      max?: number;
+      step?: number;
+      control?: "input" | "slider";
+      unit?: string;
+      defaultValue?: number;
+      description?: string;
+      section?: string;
+      showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+    } = {}
+  ) {
+    Object.assign(this, config);
+  }
+}
+
+export class TextOption implements TextOptionDefinition {
+  public readonly kind = "text" as const;
+  public inputType?: "text" | "email" | "url" | "password";
+  public placeholder?: string;
+  public minLength?: number;
+  public maxLength?: number;
+  public multiline?: boolean;
+  public defaultValue?: string;
+  public description?: string;
+  public section?: string;
+  public showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+
+  constructor(
+    public id: string,
+    public name: string,
+    public getValue: () => string,
+    public setValue: (value: string) => void,
+    config: {
+      inputType?: "text" | "email" | "url" | "password";
+      placeholder?: string;
+      minLength?: number;
+      maxLength?: number;
+      multiline?: boolean;
+      defaultValue?: string;
+      description?: string;
+      section?: string;
+      showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+    } = {}
+  ) {
+    Object.assign(this, config);
+  }
+}
+
+export class SelectOption implements SelectOptionDefinition {
+  public readonly kind = "select" as const;
+  public defaultValue?: string;
+  public description?: string;
+  public section?: string;
+  public showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+
+  constructor(
+    public id: string,
+    public name: string,
+    public choices: HandlerOptionChoice[],
+    public getValue: () => string,
+    public setValue: (value: string) => void,
+    config: {
+      defaultValue?: string;
+      description?: string;
+      section?: string;
+      showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+    } = {}
+  ) {
+    Object.assign(this, config);
+  }
+}
+
+export class MultiSelectOption implements MultiSelectOptionDefinition {
+  public readonly kind = "multiselect" as const;
+  public defaultValue?: string[];
+  public description?: string;
+  public section?: string;
+  public showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+
+  constructor(
+    public id: string,
+    public name: string,
+    public choices: HandlerOptionChoice[],
+    public getValue: () => string[],
+    public setValue: (value: string[]) => void,
+    config: {
+      defaultValue?: string[];
+      description?: string;
+      section?: string;
+      showWhen?: (values: HandlerOptionVisibilityContext) => boolean;
+    } = {}
+  ) {
+    Object.assign(this, config);
+  }
+}
+
 /**
  * Class containing format definition and method used to produce FileFormat
  * that can be supported by handlers.
@@ -153,6 +336,16 @@ export interface FileData {
   readonly bytes: Uint8Array;
 }
 
+export interface SuggestedRouteStep {
+  /** Output format extension or format identifier to reach for this step. */
+  format: string;
+  /** Optional explicit handler name to use for this step. */
+  handler?: string;
+}
+
+export type SuggestedRouteDeclaration = string | SuggestedRouteStep;
+export type SuggestedRoute = SuggestedRouteDeclaration[];
+
 /**
  * Establishes a common interface for converting between file formats.
  * Often a "wrapper" for existing tools.
@@ -167,6 +360,14 @@ export interface FormatHandler {
    * Conversion using this handler will be performed only if no other direct conversion is found.
    */
   supportAnyInput?: boolean;
+  /**
+   * Optional prioritized route shortcuts expressed as full output chains.
+   * Each entry is a route from this handler's input to a final output, e.g.
+   * [["html", "typ", "pdf"], ["html", "typ"]] or [["svg", "pdf:typst"]].
+   */
+  suggestedRoutes?: SuggestedRoute[];
+  /** Optional list of user-configurable options. */
+  getOptions?: () => HandlerOptionDefinition[];
 
   /**
    * Whether the handler is ready for use. Should be set in {@link init}.
